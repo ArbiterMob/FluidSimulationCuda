@@ -1,0 +1,304 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%12pt: grandezza carattere
+%a4paper: formato a4
+%openright: apre i capitoli a destra
+%twoside: serve per fare un documento fronteretro
+%report: stile tesi (oppure book)
+\documentclass[12pt,a4paper,openright,twoside]{report}
+
+\usepackage[italian]{babel}
+%\usepackage[latin1]{inputenc}
+\usepackage[utf8]{inputenc}
+\usepackage{fancyhdr}
+\usepackage{indentfirst}
+\usepackage{graphicx}
+\usepackage{newlfont}
+%librerie matematiche
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{latexsym}
+\usepackage{amsthm}
+\usepackage{listings}
+\usepackage{chngcntr}
+\usepackage[chapter]{minted}
+%librerie per tabelle
+\usepackage{tabularx}
+\usepackage{threeparttable}
+
+\oddsidemargin=30pt \evensidemargin=20pt%impostano i margini
+\hyphenation{sil-la-ba-zio-ne pa-ren-te-si}
+
+\usepackage[square, numbers, comma, sort&compress]{natbib} %Bibliografia
+\usepackage{hyperref}
+\usepackage{float}
+
+\usepackage[pass]{geometry}
+
+%comandi per l'impostazione della pagina, vedi il manuale della libreria fancyhdr per ulteriori delucidazioni
+\pagestyle{fancy}\addtolength{\headwidth}{20pt}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
+\renewcommand{\sectionmark}[1]{\markright{\thesection \ #1}{}}
+\rhead[\fancyplain{}{\bfseries\leftmark}]{\fancyplain{}{\bfseries\thepage}}
+\cfoot{}
+
+\linespread{1.3} %comando per impostare l'interlinea
+
+\renewcommand{\listingscaption}{Codice}
+\renewcommand{\listoflistingscaption}{Elenco dei Codici}
+
+\begin{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% FRONTESPIZIO
+\newgeometry{hmarginratio=1:1}
+\input{src/frontespizio.tex}
+\restoregeometry
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ABSTRACT 
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\pagenumbering{roman}
+\renewcommand{\abstractname}{Abstract}
+\phantomsection
+\addcontentsline{toc}{chapter}{Abstract}
+\begin{abstract}
+    Questo \`e l'abstract: un riassunto dell'introduzione di massimo 300 parole. Da scrivere alla fine.
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% RINGRAZIAMENTI 
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\chapter*{Ringraziamenti}
+\phantomsection
+\addcontentsline{toc}{chapter}{Ringraziamenti}
+Qui possiamo ringraziare il mondo intero!!!!!!!!!!\\
+Ovviamente solo se uno vuole, non \`e obbligatorio.
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% INDICE 
+\tableofcontents %crea l'indice
+%imposta l'intestazione di pagina
+\rhead[\fancyplain{}{\bfseries\leftmark}]{\fancyplain{}{\bfseries\thepage}}
+\lhead[\fancyplain{}{\bfseries\thepage}]{\fancyplain{}{\bfseries
+Indice}}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ELENCO DELLE FIGURE
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\renewcommand{\listfigurename}{Elenco delle Figure}
+\phantomsection
+\addcontentsline{toc}{chapter}{Elenco delle Figure}
+\listoffigures %crea l'elenco delle figure
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ELENCO DELLE TABELLE
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\renewcommand{\listtablename}{Elenco delle Tabelle}
+\phantomsection
+\addcontentsline{toc}{chapter}{Elenco delle Tabelle}
+\listoftables %crea l'elenco delle tabelle
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ELENCO DEI CODICI
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\phantomsection
+\addcontentsline{toc}{chapter}{Elenco dei Codici}
+\listoflistings %crea l'elenco dei codici
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% INTRODUZIONE
+\clearpage{\pagestyle{empty}\cleardoublepage}
+\chapter{Introduzione} 
+\lhead[\fancyplain{}{\bfseries\thepage}]{\fancyplain{}{\bfseries\rightmark}}
+\pagenumbering{arabic} %mette i numeri arabi
+Questa \`e l'introduzione: da scrivere alla fine, un breve riassunto su cosa si andr\`a ad affrontare nella tesi.
+Le linee guida per la stesura della Tesi di Laurea sono al seguente link \href{https://ulis.se/thesis/}{https://ulis.se/thesis/}.
+
+\section{Prima Sezione} %crea la sezione
+Questa \`e la prima sezione.
+
+Ora vediamo un elenco numerato: %crea un elenco numerato
+\begin{enumerate}
+\item primo oggetto
+\item secondo oggetto
+\item terzo oggetto
+\item quarto oggetto
+\end{enumerate}
+
+%\begin{figure}[h] %crea l'ambiente figura; [h] sta per here, cioè la figura va qui
+%\begin{center} %centra nel mezzo della pagina la figura \includegraphics[width=5cm]{figura.eps} inserisce una figura larga 5cm se si vuole usare va scommentata
+
+%inserisce la legenda ed etichetta la figura con \label{fig:prima}
+%\caption[legenda elenco figure]{legenda sotto la figura}\label{fig:prima}
+%\end{center}
+%\end{figure}
+
+
+\section{Seconda Sezione}
+Ora vediamo un elenco puntato:
+\begin{itemize} %crea un elenco puntato
+\item primo oggetto
+\item secondo oggetto
+\end{itemize}
+
+
+\section{Altra Sezione}
+Vediamo un elenco descrittivo:
+\begin{description} %crea un elenco descrittivo
+  \item[OGGETTO1] prima descrizione;
+  \item[OGGETTO2] seconda descrizione;
+  \item[OGGETTO3] terza descrizione.
+\end{description}
+
+
+\subsection{Altra SottoSezione}
+%crea una sottosottosezione
+
+\subsubsection{SottoSottoSezione}Questa sottosottosezione non viene
+numerata, ma \`e solo scritta in grassetto.
+
+
+\section{Altra Sezione} %crea una sottosezione
+Vediamo la creazione di una tabella; la tabella \ref{tab:uno}
+(richiamo il nome della tabella utilizzando la label che ho messo sotto):
+la facciamo di tre righe e tre colonne, la prima colonna
+``incolonnata'' a destra (r) e le altre centrate (c):\\
+\begin{table}[h] %ambiente tabella (serve per avere la legenda)
+\begin{center} %centra nella pagina la tabella
+\begin{tabular}{r|c|c} %tre colonne con righe verticali prodotte con |
+\hline \hline                           %inserisce due righe orizzontali
+$(1,1)$ & $(1,2)$ & $(1,3)$\\ %& separa le colonne e con
+\hline                                  %inserisce una riga orizzontale
+$(2,1)$ & $(2,2)$ & $(2,3)$\\ %  \\ va a capo
+\hline                                  %inserisce una riga orizzontale
+$(3,1)$ & $(3,2)$ & $(3,3)$\\
+\hline \hline                           %inserisce due righe orizzontali
+\end{tabular}
+\caption[legenda elenco tabelle]{legenda tabella}\label{tab:uno}
+\end{center}
+\end{table}
+
+
+\section{Altra Sezione}\label{sec:prova}%posso mettere le label anche alle section
+In questa sezione voglio fare un riferimento alla bibliografia: questo \`e il mio riferimento %\cite{gori2022metrics}.
+
+\subsection{Listati dei programmi}
+\subsubsection{Primo Listato}
+\begin{verbatim}
+        In questo ambiente     posso scrivere      come voglio,
+lasciare gli spazi che voglio e non % commentare quando voglio
+e ci sarà scritto tutto.
+Quando lo uso è meglio che disattivi il Wrap del WinEdt
+\end{verbatim}
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% SCENARI APPLICATIVI E STATO DELL'ARTE
+%\chapter{Scenari applicativi e stato dell'arte}
+%Cosa stiamo affrontando, p.e. una tesi che propone un attacco a HTTPS dovrebbe spiegare bene come funziona la parte di HTTPS attaccata e quali sono le limitazioni.
+\chapter{Scenari applicativi e stato dell'arte}
+Cosa stiamo affrontando, p.e. una tesi che propone un attacco a HTTPS dovrebbe spiegare bene come funziona la parte di HTTPS attaccata e quali sono le limitazioni.
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ANALISI PROGETTUALE
+\chapter{Analisi progettuale}
+Cosa vogliamo raggiungere, perch\'e e quali sono state le vostre scelte per lo sviluppo ``su carta".
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% IMPLEMENTAZIONE
+\chapter{Implementazione}
+Come abbiamo implementato il programma, se ci sono state scelte particolari o punti particolarmente ostici che sono stati superati. Se ci sono state difficolt\`a insormontabili vanno spiegate.\\
+\`E necessario inserire estratti di codice, tabelle o immagini nella tesi solamente quando questi aiutano la comprensione dell'argomento. Se pensate di stare scrivendo una parte molto tecnica e poco comprensibile al lettore, aiutatevi con le immagini o con il codice. Per inserire estratti di codice rifarsi all'esempio seguente oppure \`e possibile usare il package  \href{https://www.overleaf.com/learn/latex/Code\_listing}{listing}.
+\begin{minted}{c}
+#include <stdio.h>
+int main() {
+   // printf() displays the string inside quotation
+   printf("Hello, World!");
+   return 0;
+}
+\end{minted}
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% RISULTATI
+\chapter{Risultati}
+Descrivete e inserite qui gli esperimenti effettuati e i dati raccolti. Se avete grafici e dati, presentateli in questa sezione (nella forma in cui pensate sia pi\`u facile visualizzare quello che volete far trasparire dai dati). Scrivete sempre su che supporti hardware o software avete effettuato le prove e quante ne avete fatte (se rilevante).
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% CONCLUSIONI
+\chapter{Conclusioni e sviluppi futuri}
+
+Da scrivere alla fine, un breve riassunto di cosa si \`e affrontato, i risultati (se quanto indicato nell'introduzione come obiettivo \`e stato raggiunto) e come \`e possibile continuare la tesi (p.e. se qualcosa non \`e stato affrontato per motivi di tempo o limitazioni hardware).
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% RIMUOVERE LE APPENDICI SE NON UTILIZZATE
+%imposta l'intestazione di pagina
+\renewcommand{\chaptermark}[1]{\markright{\thechapter \ #1}{}}
+\lhead[\fancyplain{}{\bfseries\thepage}]{\fancyplain{}{\bfseries\rightmark}}
+\appendix %imposta le appendici
+\chapter{Prima Appendice} %crea l'appendice
+In questa Appendice non si \`e utilizzato il comando:\\
+%\verb"" è equivalente all' ambiente verbatim,  ma si utilizza all'interno di un discorso.
+\verb"\clearpage{\pagestyle{empty}\cleardoublepage}", ed infatti l'ultima pagina 8 ha l'intestazione con il numero di pagina in alto.
+%imposta l'intestazione di pagina
+\rhead[\fancyplain{}{\bfseries \thechapter \:Prima Appendice}]
+{\fancyplain{}{\bfseries\thepage}}
+
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+
+
+
+\chapter{Seconda Appendice}
+\rhead[\fancyplain{}{\bfseries \thechapter \:Seconda Appendice}]
+{\fancyplain{}{\bfseries\thepage}}
+
+
+\clearpage{\pagestyle{empty}\cleardoublepage}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% BIBLIOGRAFIA
+\addcontentsline{toc}{chapter}{Bibliografia}
+\label{Bibliography}
+\bibliographystyle{IEEEtran}
+\bibliography{src/bibliography}
+\rhead[\fancyplain{}{\bfseries Bibliografia}]
+{\fancyplain{}{\bfseries\thepage}}
+\end{document}
+
