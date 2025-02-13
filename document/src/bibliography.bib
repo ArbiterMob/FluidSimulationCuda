@@ -1,0 +1,104 @@
+@book{fernando2004gpu,
+  title={GPU gems: programming techniques, tips, and tricks for real-time graphics},
+  author={Fernando, Randima and others},
+  url = {https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu},
+  volume={590},
+  year={2004},
+  publisher={Addison-Wesley Reading}
+}
+
+@inproceedings{10.1145/311535.311548,
+author = {Stam, Jos},
+title = {Stable fluids},
+year = {1999},
+isbn = {0201485605},
+publisher = {ACM Press/Addison-Wesley Publishing Co.},
+address = {USA},
+url = {https://doi.org/10.1145/311535.311548},
+doi = {10.1145/311535.311548},
+abstract = {Building animation tools for fluid-like motions is an important and challenging problem with many applications in computer graphics. The use of physics-based models for fluid flow can greatly assist in creating such tools. Physical models, unlike key frame or procedural based techniques, permit an animator to almost effortlessly create interesting, swirling fluid-like behaviors. Also, the interaction of flows with objects and virtual forces is handled elegantly. Until recently, it was believed that physical fluid models were too expensive to allow real-time interaction. This was largely due to the fact that previous models used unstable schemes to solve the physical equations governing a fluid. In this paper, for the first time, we propose an unconditionally stable model which still produces complex fluid-like flows. As well, our method is very easy to implement. The stability of our model allows us to take larger time steps and therefore achieve faster simulations. We have used our model in conjuction with advecting solid textures to create many fluid-like animations interactively in two- and three-dimensions.},
+booktitle = {Proceedings of the 26th Annual Conference on Computer Graphics and Interactive Techniques},
+pages = {121–128},
+numpages = {8},
+keywords = {Navier-Stokes, advected textures, animation of fluids, gaseous phenomena, implicit elliptic PDE solvers, interactive modeling, stable solvers},
+series = {SIGGRAPH '99}
+}
+
+@book{chorin2013mathematical,
+  title={A Mathematical Introduction to Fluid Mechanics},
+  author={Chorin, A.J. and Marsden, J.E.},
+  isbn={9781461208839},
+  series={Texts in Applied Mathematics},
+  url={https://books.google.it/books?id=HBXSBwAAQBAJ},
+  year={2013},
+  publisher={Springer New York}
+}
+
+@book{golub2013matrix,
+  title={Matrix computations},
+  author={Golub, Gene H and Van Loan, Charles F},
+  year={2013},
+  publisher={JHU press}
+}
+
+@article{abbott1989computational,
+  title={Computational fluid dynamics-an introduction for engineers},
+  author={Abbott, Michael Barry and Basco, David R},
+  journal={NASA STI/Recon Technical Report A},
+  volume={90},
+  pages={51377},
+  year={1989}
+}
+
+@article{10.1145/882262.882364,
+author = {Bolz, Jeff and Farmer, Ian and Grinspun, Eitan and Schr\"{o}der, Peter},
+title = {Sparse matrix solvers on the GPU: conjugate gradients and multigrid},
+year = {2003},
+issue_date = {July 2003},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {22},
+number = {3},
+issn = {0730-0301},
+url = {https://doi.org/10.1145/882262.882364},
+doi = {10.1145/882262.882364},
+abstract = {Many computer graphics applications require high-intensity numerical simulation. We show that such computations can be performed efficiently on the GPU, which we regard as a full function streaming processor with high floating-point performance. We implemented two basic, broadly useful, computational kernels: a sparse matrix conjugate gradient solver and a regular-grid multigrid solver. Real time applications ranging from mesh smoothing and parameterization to fluid solvers and solid mechanics can greatly benefit from these, evidence our example applications of geometric flow and fluid simulation running on NVIDIA's GeForce FX.},
+journal = {ACM Trans. Graph.},
+month = jul,
+pages = {917–924},
+numpages = {8},
+keywords = {numerical simulation, multigrid, mesh smoothing, fluid simulation, conjugate gradient, Navier-Stokes, GPU computing}
+}
+
+@inproceedings{10.1145/1198555.1198784,
+author = {Goodnight, Nolan and Woolley, Cliff and Lewin, Gregory and Luebke, David and Humphreys, Greg},
+title = {A multigrid solver for boundary value problems using programmable graphics hardware},
+year = {2005},
+isbn = {9781450378338},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/1198555.1198784},
+doi = {10.1145/1198555.1198784},
+abstract = {We present a case study in the application of graphics hardware to general-purpose numeric computing. Specifically, we describe a system, built on programmable graphics hardware, able to solve a variety of partial differential equations with complex boundary conditions. Many areas of graphics, simulation, and computational science require efficient techniques for solving such equations. Our system implements the multigrid method, a fast and popular approach to solving large boundary value problems. We demonstrate the viability of this technique by using it to accelerate three applications: simulation of heat transfer, modeling of fluid mechanics, and tone mapping of high dynamic range images. We analyze the performance of our solver and discuss several issues, including techniques for improving the computational efficiency of iterative grid-based computations for the GPU.},
+booktitle = {ACM SIGGRAPH 2005 Courses},
+pages = {193–es},
+location = {Los Angeles, California},
+series = {SIGGRAPH '05}
+}
+
+@inproceedings{10.1145/1198555.1198795,
+author = {Kr\"{u}ger, Jens and Westermann, R\"{u}diger},
+title = {Linear algebra operators for GPU implementation of numerical algorithms},
+year = {2005},
+isbn = {9781450378338},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/1198555.1198795},
+doi = {10.1145/1198555.1198795},
+abstract = {In this work, the emphasis is on the development of strategies to realize techniques of numerical computing on the graphics chip. In particular, the focus is on the acceleration of techniques for solving sets of algebraic equations as they occur in numerical simulation. We introduce a framework for the implementation of linear algebra operators on programmable graphics processors (GPUs), thus providing the building blocks for the design of more complex numerical algorithms. In particular, we propose a stream model for arithmetic operations on vectors and matrices that exploits the intrinsic parallelism and efficient communication on modern GPUs. Besides performance gains due to improved numerical computations, graphics algorithms benefit from this model in that the transfer of computation results to the graphics processor for display is avoided. We demonstrate the effectiveness of our approach by implementing direct solvers for sparse matrices, and by applying these solvers to multi-dimensional finite difference equations, i.e. the 2D wave equation and the incompressible Navier-Stokes equations.},
+booktitle = {ACM SIGGRAPH 2005 Courses},
+pages = {234–es},
+keywords = {graphics hardware, numerical simulation},
+location = {Los Angeles, California},
+series = {SIGGRAPH '05}
+}

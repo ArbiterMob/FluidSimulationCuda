@@ -1,4 +1,5 @@
 // CUDA first version naive (multiple cells for each thread (strided))
+// Using Shared Memory
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,14 +136,39 @@ __global__ void boundaryGPU(int b, float *d_x) {
 __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
-    int size = N + 2;
-    int i, j, tid;
+    int lTid = threadIdx.x + threadIdx.y * blockDim.x;
+    int i, j, k, n, tid, sTid;
 
-    for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-        for (j = ix; j < size; j += blockDim.x * gridDim.x) {
+    int size = (N + 2);
+    int section_size_x = (size - 1) / (blockDim.x * gridDim.x) + 1;
+    int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
+    int sizeShared = section_size_x * section_size_y * blockDim.x * blockDim.y;
+
+    extern __shared__ float sharedMem[];
+    float *d_x_s = (float*)sharedMem;
+    float *d_s_s = (float*)&sharedMem[sizeShared];
+
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
             tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
+            if (j < (N + 2) && i < (N + 2)) {
+                d_x_s[sTid] = d_x[tid];
+                d_s_s[sTid] = d_s[tid];
+            }
+        }
+    }
+
+    __syncthreads();
+
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
             if (j < (N + 2) && i < (N + 2))
-                d_x[tid] += DT * d_s[tid];
+                d_x[tid] = d_x_s[sTid] + DT * d_s_s[sTid];
         }
     }
 }
@@ -151,64 +177,84 @@ __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
 __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, float alpha, float beta) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
-    int size = N + 2;
-    int i, j, tid;
+    int lTid = threadIdx.x + threadIdx.y * blockDim.x;
+    int i, j, k, n, tid, sTid;
 
-    for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-        for (j = ix; j < size; j += blockDim.x * gridDim.x) {
+    int size = (N + 2);
+    int section_size_x = (size - 1) / (blockDim.x * gridDim.x) + 1;
+    int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
+    int sizeShared = section_size_x * section_size_y * blockDim.x * blockDim.y;
+
+    extern __shared__ float sharedMem[];
+    float *d_x0_s = (float*)sharedMem;
+    float *d_x_s = (float*)&sharedMem[sizeShared];
+
+
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
             tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
             if (j >= 1 && j <= N && i >= 1 && i <= N) {
-                d_xTemp[tid] = (d_x0[tid] + alpha * (d_x[tid - 1] + d_x[tid + 1] + 
-                    d_x[tid - N - 2] + d_x[tid + N + 2])) / beta;
+                d_x_s[sTid] = d_x[tid - 1];
+                d_x_s[sTid + sizeShared] = d_x[tid + 1];
+                d_x_s[sTid + 2 * sizeShared] = d_x[tid - N - 2];
+                d_x_s[sTid + 3 * sizeShared] = d_x[tid + N + 2];
             }
+
+            if (j < N + 2 && i < N + 2)
+                d_x0_s[sTid] = d_x0[tid];
+
+            //if (j >= 1 && j <= N && i >= 1 && i <= N)
+            //printf("tid %d (%d %d) sTid %d | d_x0 %f %f | d_x 1 %f %f | d_x 2 %f %f | d_x 3 %f %f | d_x 4 %f %f\n",
+            //    tid, j, i, sTid, d_x0_s[sTid], d_x0[tid], d_x_s[sTid], d_x[tid - 1], d_x_s[sTid + sizeShared], d_x[tid + 1], d_x_s[sTid + 2 * sizeShared], d_x[tid - N - 2],
+            //    d_x_s[sTid + 3 * sizeShared], d_x[tid + N + 2]);
         }
     }
-    /*
+
     __syncthreads();
 
-    // Inefficient because multiple synchronization
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        //__syncthreads(); // synchronization intra-block to ensure that the 
-                     // threads in the boundary can compute correctly
 
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_bndOnGPU(b, d_xTemp, j, i, tid);
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
+            if (j >= 1 && j <= N && i >= 1 && i <= N) {
+                d_xTemp[tid] = (d_x0_s[sTid] + alpha * (d_x_s[sTid] + d_x_s[sTid + sizeShared] + 
+                    d_x_s[sTid + 2 * sizeShared] + d_x_s[sTid + 3 * sizeShared])) / beta;
+                //printf("tid %d (%d %d) sTid %d | d_x0 %f | d_x 1 %f %f | d_x 2 %f %f | d_x 3 %f %f | d_x 4 %f %f\n",
+                //    tid, j, i, sTid, d_x0_s[sTid], d_x_s[sTid], d_x[tid - 1], d_x_s[sTid + sizeShared], d_x[tid + 1], d_x_s[sTid + 2 * sizeShared], d_x[tid - N - 2],
+                //    d_x_s[sTid + 3 * sizeShared], d_x[tid + N + 2]);
             }
         }
     }
-
-    __syncthreads(); // now that all the borders are complete, we can compute
-                         // corners
-
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_crnOnGPU(b, d_xTemp, j, i, tid);
-            }
-        }
-    }
-    */
 }
 
 // CUDA kernel function to perform ADVECTION (using bilinear interpolation)
 __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d_v) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
-    int size = N + 2;
-    int i, j, tid;
+    int lTid = threadIdx.x + threadIdx.y * blockDim.x;
+    int i, j, k, n, tid, sTid;
+
+    int size = (N + 2);
+    int section_size_x = (size - 1) / (blockDim.x * gridDim.x) + 1;
+    int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
+    int sizeShared = section_size_x * section_size_y * blockDim.x * blockDim.y;
 
     int i0, j0, i1, j1;
     float x, y, s0, t0, s1, t1, dt0;
 
+    extern __shared__ float sharedMem[];
+    float *d_d0_s = (float*)sharedMem;
+
     dt0 = DT * N;
-    for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-        for (j = ix; j < size; j += blockDim.x * gridDim.x) {
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
             tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
             if (j >= 1 && j <= N && i >= 1 && i <= N) {
                 x = j - dt0 * d_u[tid];
                 y = i - dt0 * d_v[tid];
@@ -232,176 +278,179 @@ __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d
                 t1 = y - i0;
                 t0 = 1 - t1;
 
-                d_d[tid] = s0 * (t0 * d_d0[j0 + i0 * (N + 2)] + t1 * d_d0[j0 + i1 * (N + 2)]) +
-                    s1 * (t0 * d_d0[j1 + i0 * (N + 2)] + t1 * d_d0[j1 + i1 * (N + 2)]);
+                d_d0_s[sTid] = s0 * t0 * d_d0[j0 + i0 * (N + 2)];
+                d_d0_s[sTid + sizeShared] = s0 * t1 * d_d0[j0 + i1 * (N + 2)];
+                d_d0_s[sTid + 2 * sizeShared] = s1 * t0 * d_d0[j1 + i0 * (N + 2)];
+                d_d0_s[sTid + 3 * sizeShared] = s1 * t1 * d_d0[j1 + i1 * (N + 2)];
+            }
+        }
+    }
+
+    __syncthreads();
+
+ 
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
+            if (j >= 1 && j <= N && i >= 1 && i <= N) {
+                d_d[tid] = d_d0_s[sTid] + d_d0_s[sTid + sizeShared] + d_d0_s[sTid + 2 * sizeShared] + d_d0_s[sTid + 3 * sizeShared];
                 //printf("(%f, %f) | d_d[tid] %f (%d, %d) | d_d0[j0 + i0 * (N + 2)] %f | d_d0[j0 + i1 * (N + 2)] %f | d_d0[j1 + i0 * (N + 2)] %f | d_d0[j1 + i1 * (N + 2)] %f\n",
                 //    x, y, d_d[tid], ix, iy, d_d0[j0 + i0 * (N + 2)], d_d0[j0 + i1 * (N + 2)], d_d0[j1 + i0 * (N + 2)], d_d0[j1 + i1 * (N + 2)]);
             }
         }
     }
-
-    /*
-    __syncthreads();
-
-    // Inefficient because multiple synchronization
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        //__syncthreads(); // synchronization intra-block to ensure that the 
-                     // threads in the boundary can compute correctly
-
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_bndOnGPU(b, d_d, j, i, tid);
-            }
-        }
-    }
-
-    __syncthreads();
-
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        //__syncthreads(); // now that all the borders are complete, we can compute
-                         // corners
-
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_crnOnGPU(b, d_d, j, i, tid);
-            }
-        }
-    }
-    */
 }
 
 // CUDA kernel function to COMPUTE DIVERGENCE AND PRESSURE
 __global__ void computeDivergenceAndPressureOnGPU(float *d_u, float *d_v, float *p, float *div) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
-    int size = N + 2;
-    int i, j, tid;
+    int lTid = threadIdx.x + threadIdx.y * blockDim.x;
+    int i, j, k, n, tid, sTid;
+
+    int size = (N + 2);
+    int section_size_x = (size - 1) / (blockDim.x * gridDim.x) + 1;
+    int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
+    int sizeShared = section_size_x * section_size_y * blockDim.x * blockDim.y;
+
+    extern __shared__ float sharedMem[];
+    float *d_u_s = (float*)sharedMem;
+    float *d_v_s = (float*)&sharedMem[2 * sizeShared];
 
     float h = 1.0f / N;
-    for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-        for (j = ix; j < size; j += blockDim.x * gridDim.x) {
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
             tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
             if (j >= 1 && j <= N && i >= 1 && i <= N) {
-                div[tid] = -0.5f * h * (d_u[tid + 1] - d_u[tid - 1] + d_v[tid + N + 2] - d_v[tid - N - 2]);
+                d_v_s[sTid] = d_v[tid - N - 2];
+                d_v_s[sTid + sizeShared] = d_v[tid + N + 2];
+                d_u_s[sTid] = d_u[tid -1];
+                d_u_s[sTid + sizeShared] = d_u[tid + 1];
+            }
+        }
+    }
+
+    __syncthreads();
+    /*
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
+            if (j >= 1 && j <= N && i >= 1 && i <= N) {
+                printf("sTid %d tid %d (%d %d) | d_v 1 %f %f | d_v 2 %f %f | d_u 1 %f %f | d_u 2 %f %f\n",
+                    sTid, tid, j, i, d_v_s[sTid], d_v[tid - N - 2], d_v_s[sTid + sizeShared], d_v[tid + N + 2],
+                    d_u_s[sTid], d_u[tid -1], d_u_s[sTid + sizeShared], d_u[tid + 1]);
+            }
+        }
+    }
+    */
+
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
+            if (j >= 1 && j <= N && i >= 1 && i <= N) {
+                div[tid] = -0.5f * h * (d_u_s[sTid + sizeShared] - d_u_s[sTid] + d_v_s[sTid + sizeShared] - d_v_s[sTid]);
                 p[tid] = 0.0f;
                 //printf("div[tid] %f (%d, %d)| d_u[tid + 1] %f | d_u[tid - 1] %f | d_v[tid + N + 2] %f | d_v[tid - N - 2] %f\n",
                 //    div[tid], ix, iy, d_u[tid + 1], d_u[tid - 1], d_v[tid + N + 2], d_v[tid - N - 2]);
             }
         }
     }
-
-    /*
-    __syncthreads();
-
-    // Inefficient because multiple synchronization
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        //__syncthreads(); // synchronization intra-block to ensure that the 
-                     // threads in the boundary can compute correctly
-
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_bndOnGPU(0, div, j, i, tid);
-                set_bndOnGPU(0, p, j, i, tid);
-            }
-        }
-    }
-
-    __syncthreads(); // now that all the borders are complete, we can compute
-                         // corners
-
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_crnOnGPU(0, div, j, i, tid);
-                set_crnOnGPU(0, p, j, i, tid);
-            }
-        }
-    }
-    */
 }
 
 // CUDA kernel to perform the LAST PROJECTION STEP (using Jacobi iteration outside of kernel)
 __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
-    int size = N + 2;
-    int i, j, tid;
+    int lTid = threadIdx.x + threadIdx.y * blockDim.x;
+    int i, j, k, n, tid, sTid;
+
+    int size = (N + 2);
+    int section_size_x = (size - 1) / (blockDim.x * gridDim.x) + 1;
+    int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
+    int sizeShared = section_size_x * section_size_y * blockDim.x * blockDim.y;
+
+    extern __shared__ float sharedMem[];
+    float *d_u_s = (float*)sharedMem;
+    float *d_v_s = (float*)&sharedMem[sizeShared];
+    float *p_s = (float*)&sharedMem[2 * sizeShared];
 
     float h = 1.0f / N;
-    for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-        for (j = ix; j < size; j += blockDim.x * gridDim.x) {
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
             tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
+
             if (j >= 1 && j <= N && i >= 1 && i <= N) {
-                d_u[tid] -= 0.5f * (p[tid + 1] - p[tid - 1]) / h;
-                d_v[tid] -= 0.5f * (p[tid + N + 2] - p[tid - N - 2]) / h;
+                p_s[sTid] = p[tid - 1];
+                p_s[sTid + sizeShared] = p[tid + 1];
+                p_s[sTid + 2 * sizeShared] = p[tid - N - 2];
+                p_s[sTid + 3 * sizeShared] = p[tid + N + 2];
+            }
+
+            if (j < N + 2 && i < N + 2) {
+                d_u_s[sTid] = d_u[tid];
+                d_v_s[sTid] = d_v[tid];
             }
         }
     }
 
-    /*
     __syncthreads();
 
-    // Inefficient because multiple synchronization
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        //__syncthreads(); // synchronization intra-block to ensure that the 
-                     // threads in the boundary can compute correctly
+    for (i = iy, k = 0; i < size; i += blockDim.y * gridDim.y, k++) {
+        for (j = ix, n = 0; j < size; j += blockDim.x * gridDim.x, n++) {
+            tid = j + i * (N + 2);
+            sTid = (n + k * section_size_x) + lTid * (section_size_x * section_size_y);
 
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_bndOnGPU(1, d_u, j, i, tid);
-                set_bndOnGPU(2, d_v, j, i, tid);
+            if (j >= 1 && j <= N && i >= 1 && i <= N) {
+                d_u[tid] = d_u_s[sTid] - 0.5f * (p_s[sTid + sizeShared] - p_s[sTid]) / h;
+                d_v[tid] = d_v_s[sTid] - 0.5f * (p_s[sTid + 3 * sizeShared] - p_s[sTid + 2 * sizeShared]) / h;
             }
         }
     }
-
-    __syncthreads(); // now that all the borders are complete, we can compute
-                     // corners
-
-    if (blockIdx.x == 0 || blockIdx.x == gridDim.x - 1 || blockIdx.y == 0 || blockIdx.y == gridDim.y - 1 &&
-        ix < N + 2 && iy < N + 2) {
-        for (i = iy; i < size; i += blockDim.y * gridDim.y) {
-            for (j = ix; j < size; j += blockDim.x * gridDim.x) {
-                int tid = j + i * (N + 2);
-                set_crnOnGPU(1, d_u, j, i, tid);
-                set_crnOnGPU(2, d_v, j, i, tid);
-            }
-        }
-    }
-    */
 }
 
 // Function to simulate the evolution of density
 void dens_step(dim3 grid, dim3 block, int boundGrid, float *d_x, float *d_x0, float *d_u, float *d_v, float *d_densTemp) {
-    add_sourceOnGPU<<<grid, block>>>(d_x, d_x0);
+    int size = (hN + 2);
+    int section_size_x = (size - 1) / (block.x * grid.x) + 1;
+    int section_size_y = (size - 1) / (block.y * grid.y) + 1;
+
+    size_t sizeShared = section_size_x * section_size_y * block.x * block.y * sizeof(float);
+    
+    add_sourceOnGPU<<<grid, block, 2 * sizeShared>>>(d_x, d_x0);
 
     float alpha = hDT * hDIFF * hN * hN;
     float beta = 1 + 4 * alpha;
     SWAP(d_x0, d_x);
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
+        diffuseOnGPU<<<grid, block, 5 * sizeShared>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
         boundaryGPU<<<boundGrid, block.x>>>(0, d_densTemp);
         SWAP(d_densTemp, d_x);
     }
     
     SWAP(d_x0, d_x);
-    advectOnGPU<<<grid, block>>>(0, d_x, d_x0, d_u, d_v);
+    advectOnGPU<<<grid, block, 4 * sizeShared>>>(0, d_x, d_x0, d_u, d_v);
     boundaryGPU<<<boundGrid, block.x>>>(0, d_x);
 }
 
 // Function to simulate the evolution of velocity
 void vel_step(dim3 grid, dim3 block, int boundGrid, float *d_u, float *d_v, float *d_u0, float *d_v0, float *d_uTemp, float *d_vTemp) {
-    add_sourceOnGPU<<<grid, block>>>(d_u, d_u0);
-    add_sourceOnGPU<<<grid, block>>>(d_v, d_v0);
+    int size = (hN + 2);
+    int section_size_x = (size - 1) / (block.x * grid.x) + 1;
+    int section_size_y = (size - 1) / (block.y * grid.y) + 1;
+
+    size_t sizeShared = section_size_x * section_size_y * block.x * block.y * sizeof(float);
+    
+    add_sourceOnGPU<<<grid, block, 2 * sizeShared>>>(d_u, d_u0);
+    add_sourceOnGPU<<<grid, block, 2 * sizeShared>>>(d_v, d_v0);
 
     SWAP(d_u, d_u0);
     SWAP(d_v, d_v0);
@@ -409,15 +458,15 @@ void vel_step(dim3 grid, dim3 block, int boundGrid, float *d_u, float *d_v, floa
     float alpha = hDT * hVIS * hN * hN;
     float beta = 1 + 4 * alpha;
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
-        diffuseOnGPU<<<grid, block>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
+        diffuseOnGPU<<<grid, block, 5 * sizeShared>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
+        diffuseOnGPU<<<grid, block, 5 * sizeShared>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
         boundaryGPU<<<boundGrid, block.x>>>(1, d_uTemp);
         boundaryGPU<<<boundGrid, block.x>>>(2, d_vTemp);
         SWAP(d_uTemp, d_u);
         SWAP(d_vTemp, d_v);
     }
     
-    computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
+    computeDivergenceAndPressureOnGPU<<<grid, block, 4 * sizeShared>>>(d_u, d_v, d_u0, d_v0);
     boundaryGPU<<<boundGrid, block.x>>>(0, d_u0);
     boundaryGPU<<<boundGrid, block.x>>>(0, d_v0);
 
@@ -425,31 +474,31 @@ void vel_step(dim3 grid, dim3 block, int boundGrid, float *d_u, float *d_v, floa
     beta = 4;
     // d_u0 is p, d_v0 is div
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        diffuseOnGPU<<<grid, block, 5 * sizeShared>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
         boundaryGPU<<<boundGrid, block.x>>>(0, d_uTemp);
         SWAP(d_uTemp, d_u0);
     }
-    lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
+    lastProjectOnGPU<<<grid, block, 6 * sizeShared>>>(d_u, d_v, d_u0);
     boundaryGPU<<<boundGrid, block.x>>>(1, d_u);
     boundaryGPU<<<boundGrid, block.x>>>(2, d_v);
 
     SWAP(d_u0, d_u);
     SWAP(d_v0, d_v);
-    advectOnGPU<<<grid, block>>>(1, d_u, d_u0, d_u0, d_v0);
-    advectOnGPU<<<grid, block>>>(2, d_v, d_v0, d_u0, d_v0);
+    advectOnGPU<<<grid, block, 4 * sizeShared>>>(1, d_u, d_u0, d_u0, d_v0);
+    advectOnGPU<<<grid, block, 4 * sizeShared>>>(2, d_v, d_v0, d_u0, d_v0);
     boundaryGPU<<<boundGrid, block.x>>>(1, d_u);
     boundaryGPU<<<boundGrid, block.x>>>(2, d_v);
 
-    computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
+    computeDivergenceAndPressureOnGPU<<<grid, block, 4 * sizeShared>>>(d_u, d_v, d_u0, d_v0);
     boundaryGPU<<<boundGrid, block.x>>>(0, d_u0);
     boundaryGPU<<<boundGrid, block.x>>>(0, d_v0);
     // d_u0 is p, d_v0 is div
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        diffuseOnGPU<<<grid, block, 5 * sizeShared>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
         boundaryGPU<<<boundGrid, block.x>>>(0, d_uTemp);
         SWAP(d_uTemp, d_u0);
     }
-    lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
+    lastProjectOnGPU<<<grid, block, 6 * sizeShared>>>(d_u, d_v, d_u0);
     boundaryGPU<<<boundGrid, block.x>>>(1, d_u);
     boundaryGPU<<<boundGrid, block.x>>>(2, d_v);
 }

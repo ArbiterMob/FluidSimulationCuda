@@ -1,2 +1,2 @@
 # FluidSimulationCuda
-A Fluid Simulation that solves numerically the Navier-Stokes equationse
+A Fluid Simulation that numerically solves the Navier-Stokes equations

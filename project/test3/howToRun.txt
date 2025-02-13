@@ -1,1 +1,0 @@
-gcc -o Fluid_JosStam Fluid_JosStam.c -lglfw -lGL -lm

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 
 // GPU Constants
 __constant__ int N;       // (WidthGrid - 2) 
@@ -14,11 +15,13 @@ __constant__ float VIS;   // Viscosity coefficient
 __constant__ float DIFF;  // Diffusion coefficient
 
 // CPU Global Variables
-int hN = (1<<13) - 2;
+int hN = (1<<7) - 2;
 float hDT = 0.016f;
 float hVIS = 0.0025f;
 float hDIFF = 0.1f;
-int GRID_DIVISION_FACTOR = 2; // every thread computes 1 << GRID_DIVISION_FACTOR cells
+int GRID_DIVISION_FACTOR = 4; // explain what this is !!!
+
+namespace cg = cooperative_groups;
 
 // SWAP macro
 #define SWAP(x0, x) {float *tmp = x0; x0 = x; x = tmp;}
@@ -213,8 +216,10 @@ __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     }
 }
 
+
 // CUDA kernel function to perform DIFFUSION (using Jacobi iteration outside of kernel)
 __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, float alpha, float beta) {
+    cg::grid_group grid = cg::this_grid();
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
     int i, j, nIX, nIY, nTid;
@@ -226,23 +231,31 @@ __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, flo
     int start_x = ix * section_size_x;
     int start_y = iy * section_size_y;
 
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
-            nIX = start_x + j;
-            nIY = start_y + i;
-            nTid = nIX + nIY * (N + 2);
-            if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
-                d_xTemp[nTid] = (d_x0[nTid] + alpha * (d_x[nTid - 1] + d_x[nTid + 1] +
-                    d_x[nTid - N - 2] + d_x[nTid + N + 2])) / beta;
-                //printf("d_xTemp id %f in (%d, %d): d_x0[tid] %f | d_x[tid - 1] %f | d_x[tid + 1] %f, d_x[tid - N - 2] %f | d_x[tid + N + 2] %f | beta %f\n",
-                //    d_xTemp[nTid], nIX, nIY, d_x0[nTid], d_x[nTid - 1], d_x[nTid + 1], d_x[nTid - N - 2], d_x[nTid + N + 2], beta);
+    for (int k = 0; k < 40; k++) {
+        for (i = 0; i < section_size_y; i++) {
+            for (j = 0; j < section_size_x; j++) {
+                nIX = start_x + j;
+                nIY = start_y + i;
+                nTid = nIX + nIY * (N + 2);
+                if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                    d_xTemp[nTid] = (d_x0[nTid] + alpha * (d_x[nTid - 1] + d_x[nTid + 1] +
+                        d_x[nTid - N - 2] + d_x[nTid + N + 2])) / beta;
+                    //printf("d_xTemp id %f in (%d, %d): d_x0[tid] %f | d_x[tid - 1] %f | d_x[tid + 1] %f, d_x[tid - N - 2] %f | d_x[tid + N + 2] %f | beta %f\n",
+                    //    d_xTemp[nTid], nIX, nIY, d_x0[nTid], d_x[nTid - 1], d_x[nTid + 1], d_x[nTid - N - 2], d_x[nTid + N + 2], beta);
+                }
             }
         }
-    }
    
-    // maybe this is less performant ...
-    setBordersOnGPU(b, d_xTemp, ix, iy, start_x, start_y, section_size_x, section_size_y);
+        // maybe this is less performant ...
+        setBordersOnGPU(b, d_xTemp, ix, iy, start_x, start_y, section_size_x, section_size_y);
+        
+        float *temp = d_xTemp;
+        d_xTemp = d_x;
+        d_x = temp;
+        grid.sync();
+    }
 }
+
 
 // CUDA kernel function to perform ADVECTION (using bilinear interpolation)
 __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d_v) {
@@ -369,15 +382,21 @@ __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
 
 // Function to simulate the evolution of density
 void dens_step(dim3 grid, dim3 block, float *d_x, float *d_x0, float *d_u, float *d_v, float *d_densTemp) {
+    int b;
+    void *args[6];
+    
     add_sourceOnGPU<<<grid, block>>>(d_x, d_x0);
 
     float alpha = hDT * hDIFF * hN * hN;
     float beta = 1 + 4 * alpha;
     SWAP(d_x0, d_x);
-    for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
-        SWAP(d_densTemp, d_x);
-    }
+    //for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
+        //diffuseOnGPU<<<grid, block>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
+        //SWAP(d_densTemp, d_x);
+    //}
+    b = 0;
+    args[0] = &b; args[1] = &d_x; args[2] = &d_x0; args[3] = &d_densTemp; args[4] = &alpha; args[5] = &beta;
+    cudaLaunchCooperativeKernel((void *)diffuseOnGPU, grid, block, args);
     
     SWAP(d_x0, d_x);
     advectOnGPU<<<grid, block>>>(0, d_x, d_x0, d_u, d_v);
@@ -385,6 +404,9 @@ void dens_step(dim3 grid, dim3 block, float *d_x, float *d_x0, float *d_u, float
 
 // Function to simulate the evolution of velocity
 void vel_step(dim3 grid, dim3 block, float *d_u, float *d_v, float *d_u0, float *d_v0, float *d_uTemp, float *d_vTemp) {
+    int b;
+    void *args[6];
+    
     add_sourceOnGPU<<<grid, block>>>(d_u, d_u0);
     add_sourceOnGPU<<<grid, block>>>(d_v, d_v0);
 
@@ -393,22 +415,32 @@ void vel_step(dim3 grid, dim3 block, float *d_u, float *d_v, float *d_u0, float 
     
     float alpha = hDT * hVIS * hN * hN;
     float beta = 1 + 4 * alpha;
-    for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
-        diffuseOnGPU<<<grid, block>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
-        SWAP(d_uTemp, d_u);
-        SWAP(d_vTemp, d_v);
-    }
+    //for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
+        //diffuseOnGPU<<<grid, block>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
+        //diffuseOnGPU<<<grid, block>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
+        //SWAP(d_uTemp, d_u);
+        //SWAP(d_vTemp, d_v);
+    //}
+    b = 1;
+    args[0] = &b; args[1] = &d_u; args[2] = &d_u0; args[3] = &d_uTemp; args[4] = &alpha; args[5] = &beta;
+    cudaLaunchCooperativeKernel((void *)diffuseOnGPU, grid, block, args);
+    b = 2;
+    args[0] = &b; args[1] = &d_v; args[2] = &d_v0; args[3] = &d_vTemp; args[4] = &alpha; args[5] = &beta;
+    cudaLaunchCooperativeKernel((void *)diffuseOnGPU, grid, block, args);
     
     computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
 
     alpha = 1;
     beta = 4;
     // d_u0 is p, d_v0 is div
-    for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
-        SWAP(d_uTemp, d_u0);
-    }
+    //for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
+        //diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        //SWAP(d_uTemp, d_u0);
+    //}
+    b = 0;
+    args[0] = &b; args[1] = &d_u0; args[2] = &d_v0; args[3] = &d_uTemp; args[4] = &alpha; args[5] = &beta;
+    cudaLaunchCooperativeKernel((void *)diffuseOnGPU, grid, block, args);
+
     lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
 
     SWAP(d_u0, d_u);
@@ -418,10 +450,14 @@ void vel_step(dim3 grid, dim3 block, float *d_u, float *d_v, float *d_u0, float 
 
     computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
     // d_u0 is p, d_v0 is div
-    for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
-        SWAP(d_uTemp, d_u0);
-    }
+    //for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
+        //diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        //SWAP(d_uTemp, d_u0);
+    //}
+    b = 0;
+    args[0] = &b; args[1] = &d_u0; args[2] = &d_v0; args[3] = &d_uTemp; args[4] = &alpha; args[5] = &beta;
+    cudaLaunchCooperativeKernel((void *)diffuseOnGPU, grid, block, args);
+
     lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
 }
 
@@ -560,7 +596,7 @@ int main(int argc, char **argv) {
     CHECK(cudaMemcpy(u, d_u, nBytes, cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(v, d_v, nBytes, cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(dens, d_dens, nBytes, cudaMemcpyDeviceToHost));
-    //printStateGrid(dens, u, v);        
+    printStateGrid(dens, u, v);        
 
     // Cleaning
     free(u); free(u_prev);

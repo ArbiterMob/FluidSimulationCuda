@@ -110,6 +110,9 @@ __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     int iy = threadIdx.y + blockIdx.y * blockDim.y;
     int tid = ix + iy * (N + 2);
 
+    //printf("lTid- (%d %d)\n", ix, iy);
+
+
     if (ix < (N + 2) && iy < (N + 2))
         d_x[tid] += DT * d_s[tid];
 }
@@ -136,7 +139,6 @@ __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, flo
 
         __syncthreads(); // now that all the borders are complete, we can compute
                          // corners
-
         set_crnOnGPU(b, d_xTemp, ix, iy, tid);
     }
 }
@@ -189,7 +191,6 @@ __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d
 
         __syncthreads(); // now that all the borders are complete, we can compute
                          // corners
-
         set_crnOnGPU(b, d_d, ix, iy, tid);
     }
 }
@@ -218,7 +219,6 @@ __global__ void computeDivergenceAndPressureOnGPU(float *d_u, float *d_v, float 
 
         __syncthreads(); // now that all the borders are complete, we can compute
                          // corners
-
         set_crnOnGPU(0, div, ix, iy, tid);
         set_crnOnGPU(0, p, ix, iy, tid);
     }
@@ -246,7 +246,6 @@ __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
 
         __syncthreads(); // now that all the borders are complete, we can compute
                          // corners
-
         set_crnOnGPU(1, d_u, ix, iy, tid);
         set_crnOnGPU(2, d_v, ix, iy, tid);
     }
@@ -308,6 +307,7 @@ void vel_step(dim3 grid, dim3 block, float *d_u, float *d_v, float *d_u0, float 
         SWAP(d_uTemp, d_u0);
     }
     lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
+    
 }
 
 // Function to initialize the density and velocity

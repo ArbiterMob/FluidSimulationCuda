@@ -1,4 +1,5 @@
 // CUDA first version naive (multiple cells for each thread)
+// Using Shared Memory
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,17 +9,19 @@
 #include <cuda_runtime.h>
 
 // GPU Constants
-__constant__ int N;       // (WidthGrid - 2) 
-__constant__ float DT;    // Instantaneous change in time (timestep)
-__constant__ float VIS;   // Viscosity coefficient
-__constant__ float DIFF;  // Diffusion coefficient
+__constant__ int N;         // (WidthGrid - 2) 
+__constant__ float DT;      // Instantaneous change in time (timestep)
+__constant__ float VIS;     // Viscosity coefficient
+__constant__ float DIFF;    // Diffusion coefficient
+__constant__ int RADIUS;    // Radius for halo region 
 
 // CPU Global Variables
 int hN = (1<<13) - 2;
 float hDT = 0.016f;
 float hVIS = 0.0025f;
 float hDIFF = 0.1f;
-int GRID_DIVISION_FACTOR = 2; // every thread computes 1 << GRID_DIVISION_FACTOR cells
+int hRADIUS = 1;
+constexpr int GRID_DIVISION_FACTOR = 2; // every thread computes 1 << GRID_DIVISION_FACTOR cells
 
 // SWAP macro
 #define SWAP(x0, x) {float *tmp = x0; x0 = x; x = tmp;}
@@ -185,6 +188,7 @@ __device__ void setBordersOnGPU(int b, float *x, int ix, int iy, int start_x, in
     }
 }
 
+template<int UNROLL_FACTOR>
 // CUDA kernel function to  ADD EXTERNAL SOURCES
 __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
@@ -200,8 +204,28 @@ __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     //printf("ix %d | iy %d | section_size_x %d | section_size_y %d | start_x %d | start_y %d\n",
     //    ix, iy, section_size_x, section_size_y, start_x, start_y);
 
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
+    // Unrolled section processing
+    if (start_y + (UNROLL_FACTOR - 1) < size) {
+        #pragma unroll
+        for (i = 0; i < UNROLL_FACTOR; i++) {
+            if (start_x + (UNROLL_FACTOR - 1) < size) {
+                #pragma unroll
+                for (j = 0; j < UNROLL_FACTOR; j++) {
+                    nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    //printf("ix %d | iy %d | nIX %d | nIY %d | nTid %d\n", 
+                    //    ix, iy, nIX, nIY, nTid);
+                    if (nIX < (N + 2) && nIY < (N + 2))
+                        d_x[nTid] += DT * d_s[nTid];
+                }
+            }
+        }
+    }
+
+    // Handle remaining elements
+    for (i = UNROLL_FACTOR; i < section_size_y && start_y + i < size; i++) {
+        for (j = UNROLL_FACTOR; j < section_size_x && start_x + j < size; j++) {
             nIX = start_x + j;
             nIY = start_y + i;
             nTid = nIX + nIY * (N + 2);
@@ -213,6 +237,7 @@ __global__ void add_sourceOnGPU(float *d_x, float *d_s) {
     }
 }
 
+template <int UNROLL_FACTOR>
 // CUDA kernel function to perform DIFFUSION (using Jacobi iteration outside of kernel)
 __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, float alpha, float beta) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
@@ -226,24 +251,47 @@ __global__ void diffuseOnGPU(int b, float *d_x, float *d_x0, float *d_xTemp, flo
     int start_x = ix * section_size_x;
     int start_y = iy * section_size_y;
 
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
-            nIX = start_x + j;
-            nIY = start_y + i;
-            nTid = nIX + nIY * (N + 2);
-            if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
-                d_xTemp[nTid] = (d_x0[nTid] + alpha * (d_x[nTid - 1] + d_x[nTid + 1] +
-                    d_x[nTid - N - 2] + d_x[nTid + N + 2])) / beta;
-                //printf("d_xTemp id %f in (%d, %d): d_x0[tid] %f | d_x[tid - 1] %f | d_x[tid + 1] %f, d_x[tid - N - 2] %f | d_x[tid + N + 2] %f | beta %f\n",
-                //    d_xTemp[nTid], nIX, nIY, d_x0[nTid], d_x[nTid - 1], d_x[nTid + 1], d_x[nTid - N - 2], d_x[nTid + N + 2], beta);
+    // Unrolled section processing
+    if (start_y + (UNROLL_FACTOR - 1) < size) {
+        #pragma unroll
+        for (i = 0; i < UNROLL_FACTOR; i++) {
+            if (start_x + (UNROLL_FACTOR - 1) < size) {
+                #pragma unroll
+                for (j = 0; j < UNROLL_FACTOR; j++) {
+                    nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                        d_xTemp[nTid] = (d_x0[nTid] + alpha * (d_x[nTid - 1] + d_x[nTid + 1] +
+                            d_x[nTid - N - 2] + d_x[nTid + N + 2])) / beta;
+                        //printf("d_xTemp id %f in (%d, %d): d_x0[tid] %f | d_x[tid - 1] %f | d_x[tid + 1] %f, d_x[tid - N - 2] %f | d_x[tid + N + 2] %f | beta %f\n",
+                        //    d_xTemp[nTid], nIX, nIY, d_x0[nTid], d_x[nTid - 1], d_x[nTid + 1], d_x[nTid - N - 2], d_x[nTid + N + 2], beta);
+                    }
+                }
             }
         }
     }
-   
+
+    // Handle remaining elements
+    for (i = UNROLL_FACTOR; i < section_size_y && start_y + i < size; i++) {
+        for (j = UNROLL_FACTOR; j < section_size_x && start_x + j < size; j++) {
+            nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                        d_xTemp[nTid] = (d_x0[nTid] + alpha * (d_x[nTid - 1] + d_x[nTid + 1] +
+                            d_x[nTid - N - 2] + d_x[nTid + N + 2])) / beta;
+                        //printf("d_xTemp id %f in (%d, %d): d_x0[tid] %f | d_x[tid - 1] %f | d_x[tid + 1] %f, d_x[tid - N - 2] %f | d_x[tid + N + 2] %f | beta %f\n",
+                        //    d_xTemp[nTid], nIX, nIY, d_x0[nTid], d_x[nTid - 1], d_x[nTid + 1], d_x[nTid - N - 2], d_x[nTid + N + 2], beta);
+                    }
+        }
+    }
+
     // maybe this is less performant ...
     setBordersOnGPU(b, d_xTemp, ix, iy, start_x, start_y, section_size_x, section_size_y);
 }
 
+template <int UNROLL_FACTOR>
 // CUDA kernel function to perform ADVECTION (using bilinear interpolation)
 __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d_v) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
@@ -255,14 +303,58 @@ __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d
     int section_size_y = (size - 1) / (blockDim.y * gridDim.y) + 1;
 
     int start_x = ix * section_size_x;
-    int start_y = iy * section_size_y;
+    int start_y = iy * section_size_y;;
 
     int i0, j0, i1, j1;
     float x, y, s0, t0, s1, t1, dt0;
 
     dt0 = DT * N;
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
+    // Unrolled section processing
+    if (start_y + (UNROLL_FACTOR - 1) < size) {
+        #pragma unroll
+        for (i = 0; i < UNROLL_FACTOR; i++) {
+            if (start_x + (UNROLL_FACTOR - 1) < size) {
+                #pragma unroll
+                for (j = 0; j < UNROLL_FACTOR; j++) {
+                    nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                        x = nIX - dt0 * d_u[nTid];
+                        y = nIY - dt0 * d_v[nTid];
+
+                        if (x < 0.5) 
+                            x = 0.5; 
+                        if (x > N + 0.5) 
+                            x = N + 0.5;
+                        j0 = (int)x;
+                        j1 = j0 + 1;
+
+                        if (y < 0.5) 
+                            y = 0.5; 
+                        if (y > N + 0.5) 
+                            y = N + 0.5; 
+                        i0 = (int)y;
+                        i1 = i0 + 1;
+
+                        s1 = x - j0;
+                        s0 = 1 - s1;
+                        t1 = y - i0;
+                        t0 = 1 - t1;
+
+                        d_d[nTid] = s0 * (t0 * d_d0[j0 + i0 * (N + 2)] + t1 * d_d0[j0 + i1 * (N + 2)]) +
+                            s1 * (t0 * d_d0[j1 + i0 * (N + 2)] + t1 * d_d0[j1 + i1 * (N + 2)]);
+                        //printf("(%f, %f) | d_d[nTid] %f (%d, %d)| d_d0[j0 + i0 * (N + 2)] %f | d_d0[j0 + i1 * (N + 2)] %f | d_d0[j1 + i0 * (N + 2)] %f | d_d0[j1 + i1 * (N + 2)] %f\n",
+                        //    x, y, d_d[nTid], nIX, nIY, d_d0[j0 + i0 * (N + 2)], d_d0[j0 + i1 * (N + 2)], d_d0[j1 + i0 * (N + 2)], d_d0[j1 + i1 * (N + 2)]);
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle remaining elements
+    for (i = UNROLL_FACTOR; i < section_size_y && start_y + i < size; i++) {
+        for (j = UNROLL_FACTOR; j < section_size_x && start_x + j < size; j++) {
             nIX = start_x + j;
             nIY = start_y + i;
             nTid = nIX + nIY * (N + 2);
@@ -301,6 +393,7 @@ __global__ void advectOnGPU(int b, float *d_d, float *d_d0, float *d_u, float *d
     setBordersOnGPU(b, d_d, ix, iy, start_x, start_y, section_size_x, section_size_y);
 }
 
+template <int UNROLL_FACTOR>
 // CUDA kernel function to COMPUTE DIVERGENCE AND PRESSURE
 __global__ void computeDivergenceAndPressureOnGPU(float *d_u, float *d_v, float *p, float *div) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
@@ -315,8 +408,30 @@ __global__ void computeDivergenceAndPressureOnGPU(float *d_u, float *d_v, float 
     int start_y = iy * section_size_y;
 
     float h = 1.0f / N;
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
+    // Unrolled section processing
+    if (start_y + (UNROLL_FACTOR - 1) < size) {
+        #pragma unroll
+        for (i = 0; i < UNROLL_FACTOR; i++) {
+            if (start_x + (UNROLL_FACTOR - 1) < size) {
+                #pragma unroll
+                for (j = 0; j < UNROLL_FACTOR; j++) {
+                    nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                        div[nTid] = -0.5f * h * (d_u[nTid + 1] - d_u[nTid - 1] + d_v[nTid + N + 2] - d_v[nTid - N - 2]);
+                        p[nTid] = 0.0f;
+                        //printf("div[tid] %f (%d, %d)| d_u[tid + 1] %f | d_u[tid - 1] %f | d_v[tid + N + 2] %f | d_v[tid - N - 2] %f\n",
+                        //    div[nTid], ix, iy, d_u[nTid + 1], d_u[nTid - 1], d_v[nTid + N + 2], d_v[nTid - N - 2]);
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle remaining elements
+    for (i = UNROLL_FACTOR; i < section_size_y && start_y + i < size; i++) {
+        for (j = UNROLL_FACTOR; j < section_size_x && start_x + j < size; j++) {
             nIX = start_x + j;
             nIY = start_y + i;
             nTid = nIX + nIY * (N + 2);
@@ -334,6 +449,7 @@ __global__ void computeDivergenceAndPressureOnGPU(float *d_u, float *d_v, float 
     setBordersOnGPU(0, p, ix, iy, start_x, start_y, section_size_x, section_size_y);
 }
 
+template <int UNROLL_FACTOR>
 // CUDA kernel to perform the LAST PROJECTION STEP (using Jacobi iteration outside of kernel)
 __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
     int ix = threadIdx.x + blockIdx.x * blockDim.x;
@@ -347,10 +463,29 @@ __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
     int start_x = ix * section_size_x;
     int start_y = iy * section_size_y;
 
-
     float h = 1.0f / N;
-    for (i = 0; i < section_size_y; i++) {
-        for (j = 0; j < section_size_x; j++) {
+    // Unrolled section processing
+    if (start_y + (UNROLL_FACTOR - 1) < size) {
+        #pragma unroll
+        for (i = 0; i < UNROLL_FACTOR; i++) {
+            if (start_x + (UNROLL_FACTOR - 1) < size) {
+                #pragma unroll
+                for (j = 0; j < UNROLL_FACTOR; j++) {
+                    nIX = start_x + j;
+                    nIY = start_y + i;
+                    nTid = nIX + nIY * (N + 2);
+                    if (nIX >= 1 && nIX <= N && nIY >= 1 && nIY <= N) {
+                        d_u[nTid] -= 0.5f * (p[nTid + 1] - p[nTid - 1]) / h;
+                        d_v[nTid] -= 0.5f * (p[nTid + N + 2] - p[nTid - N - 2]) / h;
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle remaining elements
+    for (i = UNROLL_FACTOR; i < section_size_y && start_y + i < size; i++) {
+        for (j = UNROLL_FACTOR; j < section_size_x && start_x + j < size; j++) {
             nIX = start_x + j;
             nIY = start_y + i;
             nTid = nIX + nIY * (N + 2);
@@ -364,65 +499,71 @@ __global__ void lastProjectOnGPU(float *d_u, float *d_v, float *p) {
     // can be done better but it works
     setBordersOnGPU(1, d_u, ix, iy, start_x, start_y, section_size_x, section_size_y);
     setBordersOnGPU(2, d_v, ix, iy, start_x, start_y, section_size_x, section_size_y);
-
 }
 
 // Function to simulate the evolution of density
 void dens_step(dim3 grid, dim3 block, float *d_x, float *d_x0, float *d_u, float *d_v, float *d_densTemp) {
-    add_sourceOnGPU<<<grid, block>>>(d_x, d_x0);
+    add_sourceOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_x, d_x0);
 
     float alpha = hDT * hDIFF * hN * hN;
     float beta = 1 + 4 * alpha;
     SWAP(d_x0, d_x);
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
+        diffuseOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(0, d_x, d_x0, d_densTemp, alpha, beta);
         SWAP(d_densTemp, d_x);
     }
     
     SWAP(d_x0, d_x);
-    advectOnGPU<<<grid, block>>>(0, d_x, d_x0, d_u, d_v);
+    advectOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(0, d_x, d_x0, d_u, d_v);
 }
 
 // Function to simulate the evolution of velocity
 void vel_step(dim3 grid, dim3 block, float *d_u, float *d_v, float *d_u0, float *d_v0, float *d_uTemp, float *d_vTemp) {
-    add_sourceOnGPU<<<grid, block>>>(d_u, d_u0);
-    add_sourceOnGPU<<<grid, block>>>(d_v, d_v0);
+    add_sourceOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_u, d_u0);
+    add_sourceOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_v, d_v0);
 
     SWAP(d_u, d_u0);
     SWAP(d_v, d_v0);
-    
+    /*
+    cudaDeviceSynchronize();
+    float *temp = (float*)malloc(sizeof(float) * (hN + 2) * (hN + 2));
+    cudaMemcpy(temp, d_u0, sizeof(float) * (hN + 2) * (hN + 2), cudaMemcpyDeviceToHost);
+    printf("AFTER SOURCE u\n");
+    printDebug(temp);
+    */
+
     float alpha = hDT * hVIS * hN * hN;
     float beta = 1 + 4 * alpha;
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
-        diffuseOnGPU<<<grid, block>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
+        diffuseOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(1, d_u, d_u0, d_uTemp, alpha, beta);
+        diffuseOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(2, d_v, d_v0, d_vTemp, alpha, beta);
         SWAP(d_uTemp, d_u);
         SWAP(d_vTemp, d_v);
     }
-    
-    computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
+    computeDivergenceAndPressureOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_u, d_v, d_u0, d_v0);
 
     alpha = 1;
     beta = 4;
     // d_u0 is p, d_v0 is div
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        diffuseOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
         SWAP(d_uTemp, d_u0);
     }
-    lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
+    lastProjectOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_u, d_v, d_u0);
 
     SWAP(d_u0, d_u);
     SWAP(d_v0, d_v);
-    advectOnGPU<<<grid, block>>>(1, d_u, d_u0, d_u0, d_v0);
-    advectOnGPU<<<grid, block>>>(2, d_v, d_v0, d_u0, d_v0);
+    advectOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(1, d_u, d_u0, d_u0, d_v0); 
+    advectOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(2, d_v, d_v0, d_u0, d_v0);
 
-    computeDivergenceAndPressureOnGPU<<<grid, block>>>(d_u, d_v, d_u0, d_v0);
+    computeDivergenceAndPressureOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_u, d_v, d_u0, d_v0);
     // d_u0 is p, d_v0 is div
     for (int k = 0; k < 40; k++) { // inefficient -> multiple kernel calls
-        diffuseOnGPU<<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
+        diffuseOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(0, d_u0, d_v0, d_uTemp, alpha, beta);
         SWAP(d_uTemp, d_u0);
     }
-    lastProjectOnGPU<<<grid, block>>>(d_u, d_v, d_u0);
+    lastProjectOnGPU<1 << GRID_DIVISION_FACTOR><<<grid, block>>>(d_u, d_v, d_u0);
+    
 }
 
 // Function to initialize the density and velocity
@@ -502,6 +643,7 @@ int main(int argc, char **argv) {
     CHECK(cudaMemcpyToSymbol(DT, &hDT, sizeof(float)));
     CHECK(cudaMemcpyToSymbol(VIS, &hVIS, sizeof(float)));
     CHECK(cudaMemcpyToSymbol(DIFF, &hDIFF, sizeof(float)));
+    CHECK(cudaMemcpyToSymbol(RADIUS, &hRADIUS, sizeof(int)));
 
     // Define grid and block dimensions
     dim3 block, grid, nGrid;

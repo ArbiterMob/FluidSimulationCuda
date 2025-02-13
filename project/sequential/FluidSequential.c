@@ -3,19 +3,21 @@
 #include <string.h>
 #include <time.h>
 
-#define N 6         // (WidthGrid - 2) 
+#define N 8190      // (WidthGrid - 2) 
 #define DT 0.016f   // Instantaneous change in time (timestep)
 #define VIS 0.0025f // Viscosity coefficient
 #define DIFF 0.1f   // Diffusion coefficient
+#define Z 50        // Number of Steps of Simulation (used for mean runtime)
 
 // SWAP macro
 #define SWAP(x0, x) {float *tmp = x0; x0 = x; x = tmp;}
 
-// Function to debug a float grid
-void printDebug(char *string, float *x) {
-    int i, j;
+// Global variables
+double arrayElaps[Z], timeAdvection[Z], timeDiffusion[Z], timeDivergence[Z], timeProjection[Z], timeSource[Z];
 
-    printf("Debugging -> %s\n", string);
+// Function to debug a float grid
+void printDebug(float *x) {
+    int i, j;
 
     for (i = 0; i < N + 2; i++) {
         for (j = 0; j < N + 2; j++) {
@@ -48,7 +50,6 @@ void printStateGrid(float *dens, float *u, float *v) {
         printf("\n");
     }
 }
-
 
 // Function to measure time in seconds
 double cpuSecond() {
@@ -88,12 +89,14 @@ void diffuse (int b, float *x, float *x0, float alpha, float beta) {
                                                          // after every jacobi iteration
 
     for (k = 0; k < 40; k++) {
+        //double temp = cpuSecond();
         for (i = 1; i <= N; i++) {
             for (j = 1; j <= N; j++) {
                 x_new[j + i * (N + 2)] = (x0[j + i * (N + 2)] + alpha * (x[(j - 1) + i * (N + 2)] + x[(j + 1) + i * (N + 2)] + x[j + (i - 1) * (N + 2)] +
                     x[j + (i + 1) * (N + 2)])) / beta;
             }
         }
+        //printf("diffuse %d - %f\n", k, cpuSecond() - temp);
         SWAP(x, x_new); // update the grid
         set_bnd(b, x);
     }
@@ -137,8 +140,7 @@ void advect (int b, float *d, float *d0, float *u, float *v) {
     set_bnd(b, d);
 }
 
-// Function to perform PROJECTION (using jacobi iteration)
-void project(float *u, float *v, float *p, float *div) {
+void computeDivergenceAndPressure(float *u, float *v, float *p, float *div) {
     int i, j, k, size = (N + 2) * (N + 2);
     float h, alpha, beta;
     float *p_new = (float*)malloc(sizeof(float) * size);
@@ -153,11 +155,13 @@ void project(float *u, float *v, float *p, float *div) {
     }
     set_bnd(0, div);
     set_bnd(0, p);
+}
 
-    alpha = 1;
-    beta = 4;
-    diffuse(0, p, div, alpha, beta);
+// Function to perform PROJECTION (using jacobi iteration)
+void lastProject(float *u, float *v, float *p, float *div) {
+    int i, j;
 
+    float h = 1.0f / N;
     for (i = 1; i <= N; i++) {
         for (j = 1; j <= N; j++) {
             u[j + i * (N + 2)] -= 0.5f * (p[(j + 1) + i * (N + 2)] - p[(j - 1) + i * (N + 2)]) / h;
@@ -182,24 +186,58 @@ void dens_step(float *x, float *x0, float *u, float *v, float diff) {
 }
 
 // Function to simulate the evolution of velocity
-void vel_step(float *u, float *v, float *u0, float *v0, float visc) {
+void vel_step(float *u, float *v, float *u0, float *v0, float visc, int z) {
+    double iStart, iElaps;
+
+    iStart = cpuSecond();
     add_source(u, u0);
+    iElaps = cpuSecond();
+    timeSource[z] = iElaps - iStart;
+    //printf("add_source time %f\n", iElaps - iStart);
     add_source(v, v0);
 
     float alpha = DT * visc * N * N;
     float beta = 1 + 4 * alpha;
     SWAP(u0, u);
-    printDebug("ADDING SOURCES\n", u0);
+
+    iStart = cpuSecond();
     diffuse(1, u, u0, alpha, beta);
+    iElaps = cpuSecond();
+    timeDiffusion[z] = iElaps - iStart;
+    //printf("diffuse time %f\n", iElaps - iStart);
+
     SWAP(v0, v);
     diffuse(2, v, v0, alpha, beta);
-    project(u, v, u0, v0);
+
+    iStart = cpuSecond();
+    computeDivergenceAndPressure(u, v, u0, v0);
+    iElaps = cpuSecond();
+    timeDivergence[z] = iElaps - iStart;
+    //printf("computeDivergenceAndPressure time %f\n", iElaps - iStart);
+
+    alpha = 1;
+    beta = 4;
+    diffuse(0, u0, v0, alpha, beta);
+
+    iStart = cpuSecond();
+    lastProject(u, v, u0, v0);
+    iElaps = cpuSecond();
+    timeProjection[z] = iElaps - iStart;
+    //printf("lastProject time %f\n", iElaps - iStart);
 
     SWAP(u0, u);
     SWAP(v0, v);
+
+    iStart = cpuSecond();
     advect(1, u, u0, u0, v0);
+    iElaps = cpuSecond();
+    timeAdvection[z] = iElaps - iStart;
+    //printf("advect time %f\n", iElaps - iStart);
+
     advect(2, v, v0, u0, v0);
-    project(u, v, u0, v0);
+    computeDivergenceAndPressure(u, v, u0, v0);
+    diffuse(0, u0, v0, alpha, beta);
+    lastProject(u, v, u0, v0);
 }
 
 // Function to initialize the density and velocity
@@ -234,6 +272,7 @@ void initializeParameters(float *dens, float *dens_prev, float *u, float *u_prev
 
 int main(int argc, char **argv) {
     int size = (N + 2) * (N + 2);
+    double sumElaps = 0, sumAdvection = 0, sumDiffusion = 0, sumDivergence = 0, sumProjection = 0, sumSource = 0;
 
     float *u = (float*)malloc(sizeof(float) * size);
     float *u_prev = (float*)malloc(sizeof(float) * size);
@@ -246,14 +285,15 @@ int main(int argc, char **argv) {
 
     int z = 0;
     int first = 1;
-    iStart = cpuSecond();
-    while (z++ < 1) {
+    //iStart = cpuSecond();
+    while (z < Z) {
+        iStart = cpuSecond();
         if (first) {
             initializeParameters(dens, dens_prev, u, u_prev, v, v_prev);
             first = 0;
-            printf("HELLO init\n");
-            printStateGrid(dens_prev, u_prev, v_prev);
-            printf("Hello end\n");
+            //printf("HELLO init\n");
+            //printStateGrid(dens_prev, u_prev, v_prev);
+            //printf("Hello end\n");
         } else {
             for (int i = 0; i < size; i++) {
                 u_prev[i] = 0.0f;
@@ -262,16 +302,28 @@ int main(int argc, char **argv) {
             }
         }
 
-        vel_step(u, v, u_prev, v_prev, VIS);
+        vel_step(u, v, u_prev, v_prev, VIS, z);
         dens_step(dens, dens_prev, u, v, DIFF);
 
         //printStateGrid(dens, u, v);
         //checkStability(u, v);
+        iElaps = cpuSecond() - iStart;
+        arrayElaps[z++] = iElaps;
     }
-    iElaps = cpuSecond() - iStart;
-    printf("elapsed %f sec\n", iElaps);
+    //iElaps = cpuSecond() - iStart;
+    for (int i = 0; i < Z; i++) {
+        sumElaps += arrayElaps[i];
+        sumSource += timeSource[i];
+        sumDiffusion += timeDiffusion[i];
+        sumDivergence += timeDivergence[i];
+        sumAdvection += timeAdvection[i];
+        sumProjection += timeProjection[i];
+    }
 
-    printStateGrid(dens, u, v);
+    printf("Tot %f\nSource %f\nDiffusion %f\nDivergence %f\nAdvection %f\nProjection %f\n",
+        sumElaps / Z, sumSource / Z, sumDiffusion / Z / 40, sumDivergence / Z, sumAdvection / Z, sumProjection / Z);
+
+    //printStateGrid(dens, u, v);
 
     // Cleaning
     free(u); free(u_prev);
